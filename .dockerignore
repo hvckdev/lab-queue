@@ -1,0 +1,17 @@
+.git
+.idea
+.env
+.cache
+bin
+outputs
+__pycache__
+*.log
+go.work
+go.work.sum
+**/.cache
+**/bin
+**/outputs
+**/__pycache__
+**/node_modules
+**/*.tsbuildinfo
+projects/web/frontend/coverage

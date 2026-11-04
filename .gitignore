@@ -1,0 +1,10 @@
+.env
+.cache/
+bin/
+outputs/
+__pycache__/
+*.log
+.DS_Store
+**/node_modules/
+*.tsbuildinfo
+/projects/web/frontend/coverage/

@@ -1,0 +1,540 @@
+openapi: 3.0.3
+info:
+  title: Lab Queue API
+  version: 1.2.0
+  description: |
+    Внешний API. Вход устанавливает HttpOnly cookie, JWT в JSON не возвращается.
+    Все POST требуют Content-Type application/json и Origin, точно совпадающий с PUBLIC_ORIGIN.
+    POST без полей передается с телом {}. Внутренние сервисы вместо cookie принимают Bearer JWT;
+    внутренние login/register/setup дополнительно возвращают token.
+    Пароли сохраняются только как bcrypt-хеши и никогда не возвращаются API.
+servers:
+  - url: http://localhost:8080
+security:
+  - sessionCookie: []
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Процесс работает
+      responses:
+        '200': {description: OK}
+  /readyz:
+    get:
+      security: []
+      summary: Сервисы готовы
+      responses:
+        '200': {description: Сервисы и базы доступны}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/groups:
+    get:
+      security: []
+      summary: Справочник учебных групп
+      responses:
+        '200':
+          description: Группы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: {$ref: '#/components/schemas/NamedItem'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/setup:
+    get:
+      security: []
+      summary: Нужна ли первичная настройка администратора
+      responses:
+        '200':
+          description: Одноразовая настройка ещё не выполнена, если required=true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [required]
+                properties:
+                  required: {type: boolean}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      security: []
+      summary: Создать первого администратора и войти
+      description: |
+        Разрешено только до завершения первичной настройки. Пароля по умолчанию нет.
+        Создание пользователя и закрытие настройки выполняются одной транзакцией;
+        при одновременных запросах успешно создаётся только один администратор.
+        Повтор после завершения возвращает 409, существующие пароли не меняются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetupInput'}
+      responses:
+        '201': {$ref: '#/components/responses/User'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/admin/users:
+    get:
+      summary: Список пользователей (администратор)
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+        - name: offset
+          in: query
+          schema: {type: integer, minimum: 0, maximum: 1000000, default: 0}
+      responses:
+        '200':
+          description: Пользователи без паролей и хешей, упорядоченные по id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, total]
+                properties:
+                  users:
+                    type: array
+                    items: {$ref: '#/components/schemas/User'}
+                  total: {type: integer, format: int64, minimum: 0}
+        '403': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      summary: Создать пользователя (администратор)
+      description: Создаёт студента, преподавателя или администратора; сессия вызывающего администратора сохраняется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminUserInput'}
+      responses:
+        '201': {$ref: '#/components/responses/User'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/admin/groups:
+    post:
+      summary: Добавить учебную группу (администратор)
+      description: Название обрезается по краям; дубликаты без учёта регистра запрещены. Группа доступна в общем справочнике сразу после создания.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+      responses:
+        '201':
+          description: Группа создана
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group]
+                properties:
+                  group: {$ref: '#/components/schemas/NamedItem'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/admin/subjects:
+    post:
+      summary: Добавить предмет (администратор)
+      description: Название обрезается по краям; дубликаты без учёта регистра запрещены.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 200}
+      responses:
+        '201':
+          description: Предмет создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subject]
+                properties:
+                  subject: {$ref: '#/components/schemas/NamedItem'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/groups/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    get:
+      security: []
+      summary: Учебная группа по идентификатору
+      responses:
+        '200':
+          description: Группа
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group: {$ref: '#/components/schemas/NamedItem'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/register:
+    post:
+      security: []
+      summary: Регистрация студента и вход
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, email, password, group_id]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+                email: {type: string, format: email, maxLength: 254}
+                password: {type: string, format: password, description: От 8 до 72 байт UTF-8}
+                group_id: {type: integer, format: int64, minimum: 1}
+      responses:
+        '201': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/login:
+    post:
+      security: []
+      summary: Вход по email и паролю
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: {type: string, format: email}
+                password: {type: string, format: password}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/me:
+    get:
+      summary: Текущий пользователь
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/auth/logout:
+    post:
+      summary: Удалить cookie входа
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {description: Cookie удалена}
+        default: {$ref: '#/components/responses/Error'}
+  /api/subjects:
+    get:
+      summary: Справочник предметов
+      responses:
+        '200':
+          description: Предметы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subjects:
+                    type: array
+                    items: {$ref: '#/components/schemas/NamedItem'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions:
+    get:
+      summary: Сеансы своей группы для студента или свои сеансы преподавателя
+      parameters:
+        - name: subject_id
+          in: query
+          schema: {type: integer, format: int64, minimum: 1}
+        - name: group_id
+          in: query
+          schema: {type: integer, format: int64, minimum: 1}
+      responses:
+        '200':
+          description: Сеансы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: {$ref: '#/components/schemas/Session'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      summary: Создать сеанс (преподаватель)
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [subject_id, group_id, lab_title, starts_at, ends_at]
+              properties:
+                subject_id: {type: integer, format: int64, minimum: 1}
+                group_id: {type: integer, format: int64, minimum: 1}
+                lab_title: {type: string, minLength: 1, maxLength: 200}
+                starts_at: {type: string, format: date-time}
+                ends_at: {type: string, format: date-time, description: Позже starts_at и текущего времени}
+      responses:
+        '201': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/queue:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    get:
+      summary: Согласованный снимок очереди
+      description: my_entry содержит последнюю запись студента, включая завершенную; для преподавателя null.
+      responses:
+        '200':
+          description: Очередь
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session: {$ref: '#/components/schemas/Session'}
+                  entries:
+                    type: array
+                    description: Только called и waiting, по возрастанию номера талона
+                    items: {$ref: '#/components/schemas/Entry'}
+                  my_entry:
+                    allOf:
+                      - {$ref: '#/components/schemas/Entry'}
+                    nullable: true
+                  next_position: {type: integer, minimum: 1, description: Предполагаемое место до конкурентных изменений}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/entries:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      summary: Записаться в конец очереди (студент своей группы)
+      description: Повтор с новым ключом при активной записи возвращает ее без создания дубля. После completed новая запись запрещена.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '201': {$ref: '#/components/responses/Entry'}
+        '200': {$ref: '#/components/responses/Entry'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/call-next:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      summary: Вызвать следующего (автор сеанса)
+      description: До начала запрещено; после окончания приема разрешено. При существующем called возвращает его. Пустая очередь возвращает entry null.
+      parameters:
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/NullableEntry'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/entries/{entry_id}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+      - {$ref: '#/components/parameters/EntryID'}
+    post:
+      summary: Отменить собственную ожидающую запись
+      description: Повтор cancelled безопасен, другое завершенное состояние вызывает конфликт.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/Entry'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/entries/{entry_id}/complete:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+      - {$ref: '#/components/parameters/EntryID'}
+    post:
+      summary: Завершить сдачу вызванного студента (автор сеанса)
+      description: Повтор для того же completed entry безопасен и не затрагивает следующего студента.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/Entry'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/entries/{entry_id}/skip:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+      - {$ref: '#/components/parameters/EntryID'}
+    post:
+      summary: Пропустить вызванного студента (автор сеанса)
+      description: Повтор skipped безопасен; студент может записаться заново новым талоном.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/Entry'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/close-registration:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      summary: Закрыть новые записи, продолжая обслуживание (автор сеанса)
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/sessions/{id}/finish:
+    parameters:
+      - {$ref: '#/components/parameters/ID'}
+    post:
+      summary: Завершить сеанс и отменить ожидающие записи (автор сеанса)
+      description: При called возвращает 409, повтор завершения безопасен.
+      requestBody: {$ref: '#/components/requestBodies/Empty'}
+      responses:
+        '200': {$ref: '#/components/responses/Session'}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: labqueue_session
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    EntryID:
+      name: entry_id
+      in: path
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Уникальный ключ действия (например UUID). При сетевом повторе сохранить ключ; другой запрос с тем же ключом вызывает 409. Результат хранится в базе.
+      schema: {type: string, minLength: 1, maxLength: 128}
+  requestBodies:
+    Empty:
+      required: true
+      content:
+        application/json:
+          schema: {type: object, additionalProperties: false}
+          example: {}
+  responses:
+    Error:
+      description: Ошибка; 400 неверные поля, 401 требуется вход, 403 нет доступа или неверный Origin, 404 не найдено, 409 конфликт состояния или ключа, 415 тип содержимого, 500 ошибка БД, 502/503 зависимый сервис недоступен.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code: {type: string}
+                  message: {type: string}
+    User:
+      description: Пользователь; login/register/setup дополнительно устанавливают HttpOnly cookie
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user: {$ref: '#/components/schemas/User'}
+    Session:
+      description: Сеанс
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              session: {$ref: '#/components/schemas/Session'}
+    Entry:
+      description: Запись очереди
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              entry: {$ref: '#/components/schemas/Entry'}
+    NullableEntry:
+      description: Запись очереди либо null, если очередь пуста
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              entry:
+                allOf:
+                  - {$ref: '#/components/schemas/Entry'}
+                nullable: true
+  schemas:
+    SetupInput:
+      type: object
+      additionalProperties: false
+      required: [name, email, password]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, format: password, writeOnly: true, description: От 8 до 72 байт UTF-8}
+    AdminUserInput:
+      type: object
+      additionalProperties: false
+      required: [name, email, password, role]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        email: {type: string, format: email, maxLength: 254}
+        password: {type: string, format: password, writeOnly: true, description: От 8 до 72 байт UTF-8}
+        role: {type: string, enum: [student, teacher, admin]}
+        group_id: {type: integer, format: int64, minimum: 1, nullable: true, description: Обязательно для студента; null или отсутствует для преподавателя и администратора}
+    NamedItem:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+    User:
+      type: object
+      required: [id, name, email, role, group_id]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        email: {type: string, format: email}
+        role: {type: string, enum: [student, teacher, admin]}
+        group_id: {type: integer, format: int64, nullable: true}
+    Session:
+      type: object
+      required: [id, teacher_id, subject_id, subject_name, group_id, group_name, lab_title, starts_at, ends_at, registration_closed, finished, registration_open, active_count]
+      properties:
+        id: {type: integer, format: int64}
+        teacher_id: {type: integer, format: int64}
+        subject_id: {type: integer, format: int64}
+        subject_name: {type: string}
+        group_id: {type: integer, format: int64}
+        group_name: {type: string}
+        lab_title: {type: string}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+        registration_closed: {type: boolean}
+        finished: {type: boolean}
+        registration_open: {type: boolean, description: Вычисляется сервером из времени окончания и флагов}
+        active_count: {type: integer, minimum: 0}
+    Entry:
+      type: object
+      required: [id, session_id, student_id, student_name, ticket_number, status, position, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        session_id: {type: integer, format: int64}
+        student_id: {type: integer, format: int64}
+        student_name: {type: string}
+        ticket_number: {type: integer, format: int64, description: Постоянный номер талона}
+        status: {type: string, enum: [waiting, called, cancelled, completed, skipped]}
+        position: {type: integer, minimum: 0, description: Текущее место среди called и waiting; 0 для завершенной записи}
+        created_at: {type: string, format: date-time}
